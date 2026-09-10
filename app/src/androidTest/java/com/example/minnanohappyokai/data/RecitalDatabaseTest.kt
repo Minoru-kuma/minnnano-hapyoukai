@@ -4,7 +4,10 @@ import android.database.sqlite.SQLiteConstraintException
 import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -192,4 +195,128 @@ class RecitalDatabaseTest {
         assertTrue(emptyMembers.exceptionOrNull() is IllegalArgumentException)
         assertEquals(listOf(student), dao.observeMembers(performance).first().map { it.performerId })
     }
+
+    @Test
+    fun compoundEditPreservesPerformancePositionAndSavesMemberAndPieceOrder() = runBlocking {
+        val repository = RecitalRepository(database)
+        val recital = repository.createRecital("架空の発表会")
+        val section = repository.createSection(recital, "架空の部")
+        val student = repository.createPerformer("架空生徒", PerformerType.STUDENT)
+        val teacher = repository.createPerformer("架空講師", PerformerType.TEACHER)
+        val performance = repository.createPerformance(section, listOf(student), listOf(NewPiece("架空旧曲")))
+        val before = dao.getPerformance(performance)
+        val notation = "  K.架空／別表記  "
+        repository.updatePerformanceProgram(performance, listOf(teacher, student), listOf(
+            NewPiece("架空曲二", composerDisplayText = notation),
+            NewPiece("架空曲一"),
+        ))
+        assertEquals(before, dao.getPerformance(performance))
+        assertEquals(listOf(teacher, student), dao.observeMembers(performance).first().map { it.performerId })
+        val pieces = dao.observePieces(performance).first()
+        assertEquals(listOf("架空曲二", "架空曲一"), pieces.map { it.title })
+        assertEquals(listOf(0, 1), pieces.map { it.displayOrder })
+        assertEquals(notation, pieces.first().composerDisplayText)
+        repository.updatePerformanceProgram(performance, listOf(teacher), emptyList())
+        assertTrue(dao.observePieces(performance).first().isEmpty())
+        assertEquals(before, dao.getPerformance(performance))
+    }
+
+    @Test
+    fun failedCompoundEditRestoresOriginalMembersAndPieces() = runBlocking {
+        val repository = RecitalRepository(database)
+        val recital = repository.createRecital("架空の発表会")
+        val section = repository.createSection(recital, "架空の部")
+        val student = repository.createPerformer("架空生徒", PerformerType.STUDENT)
+        val teacher = repository.createPerformer("架空講師", PerformerType.TEACHER)
+        val performance = repository.createPerformance(section, listOf(student), listOf(
+            NewPiece("架空旧曲", composerDisplayText = "  架空表記  "),
+        ))
+        val before = repository.observeProgram().first()
+        val failure = runCatching {
+            repository.updatePerformanceProgram(performance, listOf(teacher), listOf(
+                NewPiece("架空新曲"),
+                NewPiece("架空不正曲", composerId = Long.MAX_VALUE),
+            ))
+        }
+        assertTrue(failure.exceptionOrNull() is SQLiteConstraintException)
+        assertEquals(before, repository.observeProgram().first())
+        for (members in listOf(emptyList(), listOf(student, student), listOf(Long.MAX_VALUE))) {
+            assertTrue(runCatching {
+                repository.updatePerformanceProgram(performance, members, emptyList())
+            }.exceptionOrNull() is IllegalArgumentException)
+            assertEquals(before, repository.observeProgram().first())
+        }
+    }
+
+    @Test
+    fun programObserverEmitsCompleteTransactionsAndTracksAllSharedTables() = runBlocking {
+        val repository = RecitalRepository(database)
+        val recital = repository.createRecital("架空の発表会")
+        val section = repository.createSection(recital, "架空の部")
+        val first = repository.createPerformer("架空生徒一", PerformerType.STUDENT)
+        val second = repository.createPerformer("架空生徒二", PerformerType.STUDENT)
+        val performance = repository.createPerformance(section, listOf(first), listOf(NewPiece("架空曲一")))
+        val emissions = Channel<ProgramSnapshot>(Channel.UNLIMITED)
+        val observer = launch { repository.observeProgram().collect { emissions.send(it) } }
+        suspend fun awaitSnapshot(predicate: (ProgramSnapshot) -> Boolean): ProgramSnapshot = withTimeout(5_000) {
+            while (true) {
+                val snapshot = emissions.receive()
+                val member = snapshot.members.singleOrNull { it.performanceId == performance }
+                if (member != null) {
+                    val expectedTitle = if (member.performerId == first) "架空曲一" else "架空曲二"
+                    assertEquals(expectedTitle, snapshot.pieces.single { it.performanceId == performance }.title)
+                }
+                if (predicate(snapshot)) return@withTimeout snapshot
+            }
+            @Suppress("UNREACHABLE_CODE")
+            error("Unreachable")
+        }
+        try {
+            awaitSnapshot { it.performances.size == 1 }
+            repeat(10) { index ->
+                val useSecond = index % 2 == 0
+                repository.updatePerformanceProgram(performance, listOf(if (useSecond) second else first), listOf(
+                    NewPiece(if (useSecond) "架空曲二" else "架空曲一"),
+                ))
+                awaitSnapshot { it.members.single().performerId == if (useSecond) second else first }
+            }
+            val composer = repository.createComposer("架空作曲家")
+            awaitSnapshot { it.composers.any { entry -> entry.id == composer } }
+            val alias = repository.createComposerAlias(composer, "架空別表記")
+            awaitSnapshot { it.aliases.any { entry -> entry.id == alias } }
+            val newPerson = repository.createPerformer("架空追加講師", PerformerType.TEACHER)
+            awaitSnapshot { it.performers.any { entry -> entry.id == newPerson } }
+            repository.deleteRecital(dao.getAllRecitals().single())
+            val after = awaitSnapshot { it.recitals.isEmpty() }
+            assertTrue(after.sections.isEmpty())
+            assertTrue(after.performances.isEmpty())
+            assertTrue(after.members.isEmpty())
+            assertTrue(after.pieces.isEmpty())
+            assertEquals(3, after.performers.size)
+            assertEquals(1, after.composers.size)
+            assertEquals(1, after.aliases.size)
+        } finally {
+            observer.cancel()
+            observer.join()
+            emissions.close()
+        }
+    }
+
+    @Test
+    fun updatingDeletedItemsFailsInsteadOfReportingSuccessfulSave() = runBlocking {
+        val repository = RecitalRepository(database)
+        assertTrue(runCatching {
+            repository.updateRecital(Recital(id = 42, name = "架空削除済み発表会"))
+        }.exceptionOrNull() is IllegalStateException)
+        assertTrue(runCatching {
+            repository.updateSection(Section(id = 42, recitalId = 42, name = "架空削除済み部", displayOrder = 0))
+        }.exceptionOrNull() is IllegalStateException)
+        assertTrue(runCatching {
+            repository.updatePerformer(Performer(id = 42, name = "架空削除済み出演者", type = PerformerType.STUDENT))
+        }.exceptionOrNull() is IllegalStateException)
+        assertTrue(runCatching {
+            repository.updatePerformanceProgram(42, listOf(42), emptyList())
+        }.exceptionOrNull() is IllegalStateException)
+    }
+
 }

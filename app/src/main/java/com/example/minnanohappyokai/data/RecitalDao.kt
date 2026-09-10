@@ -9,6 +9,31 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface RecitalDao {
+    // The repository reads these together inside one transaction for a coherent screen state.
+    @Query("SELECT * FROM recitals ORDER BY dateEpochDay IS NULL, dateEpochDay, id")
+    suspend fun getAllRecitals(): List<Recital>
+
+    @Query("SELECT * FROM sections ORDER BY recitalId, displayOrder, id")
+    suspend fun getAllSections(): List<Section>
+
+    @Query("SELECT * FROM performers ORDER BY name, id")
+    suspend fun getAllPerformers(): List<Performer>
+
+    @Query("SELECT * FROM performances ORDER BY sectionId, displayOrder, id")
+    suspend fun getAllPerformances(): List<Performance>
+
+    @Query("SELECT * FROM performance_members ORDER BY performanceId, displayOrder, performerId")
+    suspend fun getAllMembers(): List<PerformanceMember>
+
+    @Query("SELECT * FROM pieces ORDER BY performanceId, displayOrder, id")
+    suspend fun getAllPieces(): List<Piece>
+
+    @Query("SELECT * FROM composers ORDER BY canonicalName, id")
+    suspend fun getAllComposers(): List<Composer>
+
+    @Query("SELECT * FROM composer_aliases ORDER BY composerId, displayName, id")
+    suspend fun getAllAliases(): List<ComposerAlias>
+
     @Query("SELECT * FROM recitals ORDER BY dateEpochDay IS NULL, dateEpochDay, id")
     fun observeRecitals(): Flow<List<Recital>>
 
@@ -45,13 +70,13 @@ interface RecitalDao {
     @Insert suspend fun insert(composer: Composer): Long
     @Insert suspend fun insert(alias: ComposerAlias): Long
 
-    @Update suspend fun update(recital: Recital)
-    @Update suspend fun update(section: Section)
-    @Update suspend fun update(performer: Performer)
-    @Update suspend fun update(performance: Performance)
-    @Update suspend fun update(piece: Piece)
-    @Update suspend fun update(composer: Composer)
-    @Update suspend fun update(alias: ComposerAlias)
+    @Update suspend fun update(recital: Recital): Int
+    @Update suspend fun update(section: Section): Int
+    @Update suspend fun update(performer: Performer): Int
+    @Update suspend fun update(performance: Performance): Int
+    @Update suspend fun update(piece: Piece): Int
+    @Update suspend fun update(composer: Composer): Int
+    @Update suspend fun update(alias: ComposerAlias): Int
 
     @Delete suspend fun delete(recital: Recital)
     @Delete suspend fun delete(section: Section)
@@ -63,6 +88,9 @@ interface RecitalDao {
 
     @Query("DELETE FROM performance_members WHERE performanceId = :performanceId")
     suspend fun deleteMembers(performanceId: Long)
+
+    @Query("DELETE FROM pieces WHERE performanceId = :performanceId")
+    suspend fun deletePieces(performanceId: Long)
 
     @Query("SELECT * FROM performers WHERE id IN (:ids)")
     suspend fun getPerformers(ids: List<Long>): List<Performer>

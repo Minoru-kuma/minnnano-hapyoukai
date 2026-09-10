@@ -1,10 +1,33 @@
 package com.example.minnanohappyokai.data
 
 import androidx.room.withTransaction
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 /** Local persistence only. Compound edits either commit together or leave the program unchanged. */
 class RecitalRepository(private val database: AppDatabase) {
     private val dao = database.recitalDao()
+
+    /** Every emission is read atomically, including shared performers and composer candidates. */
+    fun observeProgram(): Flow<ProgramSnapshot> = database.invalidationTracker.createFlow(
+        "recitals", "sections", "performers", "performances",
+        "performance_members", "pieces", "composers", "composer_aliases",
+        emitInitialState = true,
+    ).map {
+        database.withTransaction {
+            ProgramSnapshot(
+                recitals = dao.getAllRecitals(),
+                sections = dao.getAllSections(),
+                performers = dao.getAllPerformers(),
+                performances = dao.getAllPerformances(),
+                members = dao.getAllMembers(),
+                pieces = dao.getAllPieces(),
+                composers = dao.getAllComposers(),
+                aliases = dao.getAllAliases(),
+            )
+        }
+    }.distinctUntilChanged()
 
     fun observeRecitals() = dao.observeRecitals()
     fun observeRecital(id: Long) = dao.observeRecital(id)
@@ -23,7 +46,7 @@ class RecitalRepository(private val database: AppDatabase) {
 
     suspend fun updateRecital(recital: Recital) {
         require(recital.name.isNotBlank()) { "Recital name must not be blank" }
-        dao.update(recital)
+        check(dao.update(recital) == 1) { "The item no longer exists" }
     }
 
     // Deleting an event intentionally removes its sections, performances, members and pieces.
@@ -37,7 +60,7 @@ class RecitalRepository(private val database: AppDatabase) {
     suspend fun updateSection(section: Section) {
         require(section.name.isNotBlank()) { "Section name must not be blank" }
         require(section.displayOrder >= 0) { "Order must not be negative" }
-        dao.update(section)
+        check(dao.update(section) == 1) { "The item no longer exists" }
     }
 
     suspend fun deleteSection(section: Section) = dao.delete(section)
@@ -49,7 +72,7 @@ class RecitalRepository(private val database: AppDatabase) {
 
     suspend fun updatePerformer(performer: Performer) {
         require(performer.name.isNotBlank()) { "Performer name must not be blank" }
-        dao.update(performer)
+        check(dao.update(performer) == 1) { "The item no longer exists" }
     }
 
     /** Returns false while the performer belongs to any performance; never removes those links. */
@@ -89,9 +112,30 @@ class RecitalRepository(private val database: AppDatabase) {
         id
     }
 
+    /** Saves an editor draft atomically and preserves this performance's existing position. */
+    suspend fun updatePerformanceProgram(
+        performanceId: Long,
+        performerIds: List<Long>,
+        pieces: List<NewPiece>,
+    ) {
+        database.withTransaction {
+            check(dao.getPerformance(performanceId) != null) { "Performance no longer exists" }
+            requirePerformers(performerIds)
+            pieces.forEach { require(it.title.isNotBlank()) { "Piece title must not be blank" } }
+            dao.deleteMembers(performanceId)
+            dao.insertMembers(performerIds.mapIndexed { index, performerId ->
+                PerformanceMember(performanceId, performerId, index)
+            })
+            dao.deletePieces(performanceId)
+            pieces.forEachIndexed { index, piece ->
+                dao.insert(piece.toEntity(performanceId, index))
+            }
+        }
+    }
+
     suspend fun updatePerformance(performance: Performance) {
         require(performance.displayOrder >= 0) { "Order must not be negative" }
-        dao.update(performance)
+        check(dao.update(performance) == 1) { "The item no longer exists" }
     }
 
     suspend fun deletePerformance(performance: Performance) = dao.delete(performance)
@@ -116,7 +160,7 @@ class RecitalRepository(private val database: AppDatabase) {
     suspend fun updatePiece(piece: Piece) {
         require(piece.title.isNotBlank()) { "Piece title must not be blank" }
         require(piece.displayOrder >= 0) { "Order must not be negative" }
-        dao.update(piece)
+        check(dao.update(piece) == 1) { "The item no longer exists" }
     }
 
     suspend fun deletePiece(piece: Piece) = dao.delete(piece)
@@ -128,7 +172,7 @@ class RecitalRepository(private val database: AppDatabase) {
 
     suspend fun updateComposer(composer: Composer) {
         require(composer.canonicalName.isNotBlank()) { "Composer name must not be blank" }
-        dao.update(composer)
+        check(dao.update(composer) == 1) { "The item no longer exists" }
     }
 
     // SET_NULL removes only identity links; each piece retains its own program notation.
@@ -141,7 +185,7 @@ class RecitalRepository(private val database: AppDatabase) {
 
     suspend fun updateComposerAlias(alias: ComposerAlias) {
         require(alias.displayName.isNotBlank()) { "Composer notation must not be blank" }
-        dao.update(alias)
+        check(dao.update(alias) == 1) { "The item no longer exists" }
     }
 
     suspend fun deleteComposerAlias(alias: ComposerAlias) = dao.delete(alias)
