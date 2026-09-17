@@ -6,13 +6,27 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import androidx.room.TypeConverter
 
-@Entity(tableName = "recitals")
+/**
+ * The current recital. New rows always use [activeSlot] = 1; its unique index is the
+ * persistence boundary for the "zero or one current recital" invariant.
+ *
+ * A nullable slot is retained only to make the v1 migration non-destructive when a
+ * development database contains more than one old-style recital. Such legacy rows are
+ * intentionally invisible to all current-recital queries and no new code creates them.
+ */
+@Entity(
+    tableName = "recitals",
+    indices = [Index(value = ["activeSlot"], unique = true)],
+)
 data class Recital(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val dateEpochDay: Long? = null,
     val venue: String = "",
+    val activeSlot: Int? = CURRENT_RECITAL_SLOT,
 )
+
+const val CURRENT_RECITAL_SLOT = 1
 
 @Entity(
     tableName = "sections",
@@ -31,12 +45,48 @@ data class Section(
 
 enum class PerformerType { STUDENT, TEACHER }
 
-@Entity(tableName = "performers")
+@Entity(
+    tableName = "performers",
+    foreignKeys = [ForeignKey(
+        entity = Performer::class,
+        parentColumns = ["id"],
+        childColumns = ["assignedTeacherId"],
+        onDelete = ForeignKey.RESTRICT,
+    )],
+    indices = [Index("assignedTeacherId")],
+)
 data class Performer(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val type: PerformerType,
     val grade: String? = null,
+    /** A STUDENT may refer to a registered TEACHER. Teachers never have an assignment. */
+    val assignedTeacherId: Long? = null,
+)
+
+/** A current-year selection. It is removed with its recital, never with the directory. */
+@Entity(
+    tableName = "recital_participants",
+    primaryKeys = ["recitalId", "performerId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = Recital::class,
+            parentColumns = ["id"],
+            childColumns = ["recitalId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+        ForeignKey(
+            entity = Performer::class,
+            parentColumns = ["id"],
+            childColumns = ["performerId"],
+            onDelete = ForeignKey.RESTRICT,
+        ),
+    ],
+    indices = [Index("performerId")],
+)
+data class RecitalParticipant(
+    val recitalId: Long,
+    val performerId: Long,
 )
 
 @Entity(

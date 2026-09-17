@@ -85,6 +85,7 @@ internal class PerformanceEditorViewModel(
     }
 
     fun toggleMember(id: Long) {
+        if (id !in members && program?.participants?.none { it.performerId == id } != false) return
         members = if (id in members) members - id else members + id
         memberError = false
     }
@@ -145,7 +146,7 @@ internal class PerformanceEditorViewModel(
         val type = performerType ?: return
         if (performerName.isBlank()) return
         mutate {
-            val id = repository.createPerformer(performerName, type,
+            val id = repository.createCurrentParticipantPerformer(performerName, type,
                 performerGrade.takeIf { type == PerformerType.STUDENT && it.isNotBlank() })
             members = members + id
             memberError = false

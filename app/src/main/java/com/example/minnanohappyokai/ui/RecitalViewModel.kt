@@ -14,10 +14,10 @@ import kotlinx.coroutines.launch
 
 internal data class RecitalUiState(
     val program: ProgramSnapshot? = null,
+    val loaded: Boolean = false,
     val readError: Boolean = false,
     val busy: Boolean = false,
     val error: String? = null,
-    val completedRoute: String? = null,
 )
 
 internal class RecitalViewModel(val repository: RecitalRepository) : ViewModel() {
@@ -29,11 +29,11 @@ internal class RecitalViewModel(val repository: RecitalRepository) : ViewModel()
 
     fun retry() {
         observation?.cancel()
-        mutableState.update { it.copy(readError = false) }
+        mutableState.update { it.copy(readError = false, loaded = false) }
         observation = viewModelScope.launch {
             try {
                 repository.observeProgram().collect { snapshot ->
-                    mutableState.update { it.copy(program = snapshot, readError = false) }
+                    mutableState.update { it.copy(program = snapshot, loaded = true, readError = false) }
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -43,13 +43,13 @@ internal class RecitalViewModel(val repository: RecitalRepository) : ViewModel()
         }
     }
 
-    fun perform(exitRoute: String? = null, action: suspend RecitalRepository.() -> Unit) {
+    fun perform(action: suspend RecitalRepository.() -> Unit) {
         if (mutableState.value.busy) return
         mutableState.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
             try {
                 repository.action()
-                mutableState.update { it.copy(busy = false, completedRoute = exitRoute) }
+                mutableState.update { it.copy(busy = false) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -60,7 +60,6 @@ internal class RecitalViewModel(val repository: RecitalRepository) : ViewModel()
         }
     }
 
-    fun consumeCompletion() { mutableState.update { it.copy(completedRoute = null) } }
     fun clearError() { mutableState.update { it.copy(error = null) } }
 
     class Factory(private val repository: RecitalRepository) : ViewModelProvider.Factory {
