@@ -1,19 +1,13 @@
 package com.example.minnanohappyokai.data
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import androidx.room.TypeConverter
 
-/**
- * The current recital. New rows always use [activeSlot] = 1; its unique index is the
- * persistence boundary for the "zero or one current recital" invariant.
- *
- * A nullable slot is retained only to make the v1 migration non-destructive when a
- * development database contains more than one old-style recital. Such legacy rows are
- * intentionally invisible to all current-recital queries and no new code creates them.
- */
+/** The one current recital. Its non-null, unique slot enforces the zero-or-one invariant. */
 @Entity(
     tableName = "recitals",
     indices = [Index(value = ["activeSlot"], unique = true)],
@@ -23,7 +17,7 @@ data class Recital(
     val name: String,
     val dateEpochDay: Long? = null,
     val venue: String = "",
-    val activeSlot: Int? = CURRENT_RECITAL_SLOT,
+    @ColumnInfo(defaultValue = "1") val activeSlot: Int = CURRENT_RECITAL_SLOT,
 )
 
 const val CURRENT_RECITAL_SLOT = 1

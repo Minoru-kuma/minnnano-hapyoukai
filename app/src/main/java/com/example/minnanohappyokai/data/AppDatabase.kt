@@ -25,16 +25,18 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile private var instance: AppDatabase? = null
 
         /**
-         * v1 allowed several recitals. To avoid deleting data, its most recently created row is
-         * made current and all older rows receive no active slot. Current APIs never expose those
-         * legacy rows and every v2 recital is protected by the unique activeSlot index.
+         * v1 allowed several recitals. v2 keeps only the most recently created one (maximum ID)
+         * as current and deletes all other recital records with their recital-scoped children.
+         * Performer, Composer and ComposerAlias are independent master data and remain intact.
          */
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE recitals ADD COLUMN activeSlot INTEGER")
                 db.execSQL(
-                    "UPDATE recitals SET activeSlot = $CURRENT_RECITAL_SLOT " +
-                        "WHERE id = (SELECT MAX(id) FROM recitals)",
+                    "ALTER TABLE recitals ADD COLUMN activeSlot INTEGER NOT NULL " +
+                        "DEFAULT $CURRENT_RECITAL_SLOT",
+                )
+                db.execSQL(
+                    "DELETE FROM recitals WHERE id != (SELECT MAX(id) FROM recitals)",
                 )
                 db.execSQL(
                     "CREATE UNIQUE INDEX IF NOT EXISTS index_recitals_activeSlot " +

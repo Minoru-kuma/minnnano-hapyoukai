@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface RecitalDao {
-    /** All recital-scoped reads below deliberately exclude v1 migration leftovers. */
+    /** All recital-scoped reads below address the only current recital. */
     @Query("SELECT * FROM recitals WHERE activeSlot = :slot LIMIT 1")
     suspend fun getActiveRecital(slot: Int = CURRENT_RECITAL_SLOT): Recital?
 

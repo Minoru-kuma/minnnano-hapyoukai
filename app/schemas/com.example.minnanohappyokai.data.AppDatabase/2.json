@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 2,
-    "identityHash": "e0984b3bde3b99c0c552463ebbc9e0bc",
+    "identityHash": "1fad63c3b8c9c71efacc0927d4fe42d0",
     "entities": [
       {
         "tableName": "recitals",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `dateEpochDay` INTEGER, `venue` TEXT NOT NULL, `activeSlot` INTEGER)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `dateEpochDay` INTEGER, `venue` TEXT NOT NULL, `activeSlot` INTEGER NOT NULL DEFAULT 1)",
         "fields": [
           {
             "fieldPath": "id",
@@ -34,7 +34,9 @@
           {
             "fieldPath": "activeSlot",
             "columnName": "activeSlot",
-            "affinity": "INTEGER"
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "1"
           }
         ],
         "primaryKey": {
@@ -545,7 +547,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'e0984b3bde3b99c0c552463ebbc9e0bc')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '1fad63c3b8c9c71efacc0927d4fe42d0')"
     ]
   }
 }
