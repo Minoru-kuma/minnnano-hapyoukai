@@ -35,6 +35,37 @@ abstract class AppDatabase : RoomDatabase() {
                     "ALTER TABLE recitals ADD COLUMN activeSlot INTEGER NOT NULL " +
                         "DEFAULT $CURRENT_RECITAL_SLOT",
                 )
+                // FK enforcement may be off during migration. Remove obsolete children before
+                // their parents explicitly, keeping every join target until its children are gone.
+                db.execSQL(
+                    """
+                    DELETE FROM pieces WHERE performanceId IN (
+                        SELECT performance.id FROM performances performance
+                        INNER JOIN sections section ON section.id = performance.sectionId
+                        WHERE section.recitalId != (SELECT MAX(id) FROM recitals)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    DELETE FROM performance_members WHERE performanceId IN (
+                        SELECT performance.id FROM performances performance
+                        INNER JOIN sections section ON section.id = performance.sectionId
+                        WHERE section.recitalId != (SELECT MAX(id) FROM recitals)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    DELETE FROM performances WHERE sectionId IN (
+                        SELECT id FROM sections
+                        WHERE recitalId != (SELECT MAX(id) FROM recitals)
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "DELETE FROM sections WHERE recitalId != (SELECT MAX(id) FROM recitals)",
+                )
                 db.execSQL(
                     "DELETE FROM recitals WHERE id != (SELECT MAX(id) FROM recitals)",
                 )
