@@ -61,7 +61,9 @@ class RecitalRepository(private val database: AppDatabase) {
     suspend fun updateSection(section: Section) = database.withTransaction {
         require(section.name.isNotBlank()) { "Section name must not be blank" }
         require(section.displayOrder >= 0) { "Order must not be negative" }
-        requireActiveSection(section.id)
+        val existing = checkNotNull(dao.getSection(section.id)) { "Section does not exist" }
+        requireActiveSection(existing.id)
+        require(section.recitalId == existing.recitalId) { "A section's recital cannot be changed" }
         check(dao.update(section) == 1) { "The item no longer exists" }
     }
 
@@ -95,7 +97,10 @@ class RecitalRepository(private val database: AppDatabase) {
 
     suspend fun updatePerformer(performer: Performer) = database.withTransaction {
         require(dao.getPerformer(performer.id) != null) { "The item no longer exists" }
-        validatePerformer(performer.name, performer.type, performer.grade, performer.assignedTeacherId)
+        validatePerformer(
+            performer.name, performer.type, performer.grade, performer.assignedTeacherId,
+            performerId = performer.id,
+        )
         if (performer.type != PerformerType.TEACHER) {
             require(dao.countAssignedStudents(performer.id) == 0) {
                 "A teacher assigned to students cannot be changed to a student"
@@ -184,7 +189,9 @@ class RecitalRepository(private val database: AppDatabase) {
 
     suspend fun updatePerformance(performance: Performance) = database.withTransaction {
         require(performance.displayOrder >= 0) { "Order must not be negative" }
-        requireActivePerformance(performance.id)
+        val existing = checkNotNull(dao.getPerformance(performance.id)) { "Performance does not exist" }
+        requireActivePerformance(existing.id)
+        require(performance.sectionId == existing.sectionId) { "A performance's section cannot be changed" }
         check(dao.update(performance) == 1) { "The item no longer exists" }
     }
 
@@ -213,7 +220,9 @@ class RecitalRepository(private val database: AppDatabase) {
     suspend fun updatePiece(piece: Piece) = database.withTransaction {
         require(piece.title.isNotBlank()) { "Piece title must not be blank" }
         require(piece.displayOrder >= 0) { "Order must not be negative" }
-        requireActivePerformance(piece.performanceId)
+        val existing = checkNotNull(dao.getPiece(piece.id)) { "The item no longer exists" }
+        requireActivePerformance(existing.performanceId)
+        require(piece.performanceId == existing.performanceId) { "A piece's performance cannot be changed" }
         check(dao.update(piece) == 1) { "The item no longer exists" }
     }
 
@@ -241,8 +250,10 @@ class RecitalRepository(private val database: AppDatabase) {
         return dao.insert(ComposerAlias(composerId = composerId, displayName = displayName))
     }
 
-    suspend fun updateComposerAlias(alias: ComposerAlias) {
+    suspend fun updateComposerAlias(alias: ComposerAlias) = database.withTransaction {
         require(alias.displayName.isNotBlank()) { "Composer notation must not be blank" }
+        val existing = checkNotNull(dao.getComposerAlias(alias.id)) { "The item no longer exists" }
+        require(alias.composerId == existing.composerId) { "An alias's composer cannot be changed" }
         check(dao.update(alias) == 1) { "The item no longer exists" }
     }
 
@@ -324,6 +335,7 @@ class RecitalRepository(private val database: AppDatabase) {
         type: PerformerType,
         grade: String?,
         assignedTeacherId: Long?,
+        performerId: Long? = null,
     ) {
         require(name.isNotBlank()) { "Performer name must not be blank" }
         if (type == PerformerType.TEACHER) {
@@ -331,6 +343,7 @@ class RecitalRepository(private val database: AppDatabase) {
             require(assignedTeacherId == null) { "Teachers do not have an assigned teacher" }
         }
         if (assignedTeacherId != null) {
+            require(assignedTeacherId != performerId) { "A performer cannot be their own assigned teacher" }
             require(type == PerformerType.STUDENT) { "Only students can have an assigned teacher" }
             require(dao.getPerformer(assignedTeacherId)?.type == PerformerType.TEACHER) {
                 "Assigned teacher must be a registered teacher"

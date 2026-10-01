@@ -58,6 +58,8 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.room.testing)
+    // Room's migration serializers need the 1.8.1 JVM defaults in the tested app runtime.
+    debugRuntimeOnly(libs.kotlinx.serialization.core)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

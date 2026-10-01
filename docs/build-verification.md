@@ -1,16 +1,36 @@
 # 検証結果
 
-実施日：2026-09-17。Room v2 の現行発表会基盤、最小 Compose 起動ルート、v1 移行テストを対象に確認した。
+実施日：2026-10-01。通常更新での親 ID 変更禁止と担当講師の自己参照禁止を対象に確認した。UI・Room スキーマ・本番の移行処理は変更していない。
 
 | コマンド | 結果 |
 | --- | --- |
-| `./gradlew test` | 成功（確定プログラム値スナップショットと学年進行の単体テスト） |
-| `./gradlew :app:compileDebugAndroidTestKotlin` | 成功（Room 行動テストと v1 → v2 移行テストをコンパイル） |
-| `./gradlew lint` | 成功 |
-| `./gradlew assembleDebug` | 成功 |
-| `./gradlew connectedDebugAndroidTest` | 未実行：接続済み端末／エミュレータがなく `No connected devices` |
+| `./gradlew test` | 終了コード 0、成功。単体テスト 2 件、失敗・エラー・スキップ 0 件 |
+| `./gradlew lint` | 終了コード 0、成功。エラー 0 件、警告 23 件 |
+| `./gradlew assembleDebug` | 終了コード 0、成功。Debug APK を生成 |
+| `./gradlew connectedDebugAndroidTest` | 終了コード 1、失敗。Pixel 10a（Android 17）で 17 件実行、16 件成功・1 件失敗、エラー・スキップ 0 件 |
 
-`assembleDebug` の初回実行時に、既存依存ライブラリ `libandroidx.graphics.path.so` をシンボル除去できないというパッケージング通知が出る。APK 生成は成功しており、今回の変更によるコンパイルエラーではない。
+追加した回帰テスト 8 件と既存の Repository 行動テスト 7 件は、全 15 件が実機で成功した。既存のアプリコンテキスト確認も成功した。唯一の失敗は既存の `AppDatabaseMigrationTest.migrateV1RetainsOnlyNewestRecitalCascadesOldWorkingDataAndKeepsMasters` で、57 行目の部の件数確認が `expected:<1> but was:<2>` となる。
+
+lint 警告は依存バージョン更新の通知・未使用リソース・既存 UI の改善提案である。今回追加した serialization core に対する更新通知が 1 件増えた。`assembleDebug` では既存依存ライブラリ `libandroidx.graphics.path.so` のシンボル除去通知が出るが、APK 生成は成功した。
+
+## 実機テスト用依存の調整
+
+初回の移行テストは `MigrationTestHelper.createDatabase()` のスキーマ読み込み中に `AbstractMethodError: GeneratedSerializer.typeParametersSerializers()` で停止した。`dependencyInsight` とローカル JAR のバイトコード確認で、Debug アプリが serialization core 1.7.3 を使い、Room 2.8.4 の移行シリアライザーが 1.8.1 の JVM default 実装を必要とする不整合を確認した。
+
+`debugRuntimeOnly` に serialization core 1.8.1 を追加し、実行時依存を揃えた。Release の依存構成と Gradle・AGP・Kotlin・Compose・Room のバージョンは変更していない。上表は依存調整後に指定の 4 コマンドを再実行した結果であり、`AbstractMethodError` は解消した。
+
+## 追加した回帰テスト
+
+- 部の発表会 ID の変更を Repository で拒否し、部と配下のデータを保持する。
+- 演奏を別の実在する部へ移す更新を拒否し、演奏・出演者関係・曲を保持する。
+- 曲を別の実在する演奏へ移す更新を拒否し、曲名・表示順・作曲家情報も保持する。
+- 作曲家の別表記を別の実在する作曲家へ移す更新を拒否する。
+- 同じ親を維持する名前・表示順・曲名・作曲家 ID の変更／解除・正確な表示文字列・別表記名の通常編集は保存する。
+- 担当生徒のいない講師を生徒に変え、自分自身を担当講師に指定する更新を拒否し、元の講師を保持する。
+- 生徒の自己参照・生徒への参照・存在しない講師への参照・講師への担当設定を拒否し、名簿を保持する。
+- 別の講師への担当変更と、担当生徒のいない講師の有効な種別変更を許可する。
+
+拒否テストは `IllegalArgumentException` と保存前後の `ProgramSnapshot` 全体の一致を確認する。既存の「生徒の担当になっている講師は生徒へ変更できない」テストにも、失敗後の講師レコードと生徒の担当が変わらないことの確認を追加した。
 
 ## Room テストの対象
 
@@ -22,4 +42,8 @@
 - 複合保存の失敗時のロールバックと、全子要素を要求する並べ替えを確認すること。
 - `AppDatabaseMigrationTest` で v1 の最大IDの発表会だけを残し、他の発表会固有データをCASCADE削除しつつ、名簿・作曲家を保持すること、当年参加者の移行、担当講師外部キーを確認すること。
 
-計測テストは APK まで生成済みである。端末またはエミュレータを接続した環境で `./gradlew connectedDebugAndroidTest` を再実行して、上記の Room 実行結果を確定する。
+## 残る整合性上の問題
+
+実機の既存 v1 → v2 移行テストで削除漏れを確認した。`MIGRATION_1_2` は旧発表会を削除するときに CASCADE に依存するが、現行の Room 生成コードが外部キーを有効化するのは移行後の `onOpen` である。移行時に外部キーが無効だと、旧発表会の部・演奏・出演者関係・曲が残る。テストでは部の件数確認で失敗しているため、後続の子テーブルの確認には到達していない。本番 Room の接続処理も外部キー有効化が移行後になることをソースから確認しており、同じ削除漏れが起きる懸念がある（本番の DB オープン経路での実機再現は未実施）。テストの無効化や外部キーを強制有効化するテスト専用の回避は行っていない。この移行処理の修正は今回指定された 2 件とは別の変更になるため未実施であり、全チェック成功とは扱わない。
+
+親 ID の不変性と担当講師の種別・自己参照の検証は Repository 境界で実施する。DAO の直接操作ではこれらの検証を回避できる。また、既存の `activeSlot` 一意索引は同じ slot の重複を防ぐが、異なる slot の Recital を直接挿入する操作まで禁止するものではない。通常の Repository は slot を固定し、現行発表会を 0 件または 1 件に制限する。

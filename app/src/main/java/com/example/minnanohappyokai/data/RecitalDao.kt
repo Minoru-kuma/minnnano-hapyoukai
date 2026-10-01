@@ -85,6 +85,9 @@ interface RecitalDao {
     @Query("SELECT * FROM pieces WHERE id = :id")
     suspend fun getPiece(id: Long): Piece?
 
+    @Query("SELECT * FROM composer_aliases WHERE id = :id")
+    suspend fun getComposerAlias(id: Long): ComposerAlias?
+
     @Query("SELECT * FROM performers ORDER BY name, id")
     fun observePerformers(): Flow<List<Performer>>
 
